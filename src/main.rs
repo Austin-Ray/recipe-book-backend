@@ -1,4 +1,4 @@
-use actix_web::{post, web, App, Error, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, Error, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -43,6 +43,16 @@ async fn add(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Resul
     }
 }
 
+#[get("/recipes/all")]
+async fn recipes(data: web::Data<AppState>) -> Result<HttpResponse, Error> {
+    let recipes = data.recipes.lock().unwrap();
+
+    match serde_json::to_string(&*recipes) {
+        Ok(json) => Ok(HttpResponse::Ok().body(json)),
+        Err(_) => Ok(HttpResponse::InternalServerError().body("Error")),
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let state = web::Data::new(AppState {
@@ -54,6 +64,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(state.clone())
             .service(hello)
             .service(add)
+            .service(recipes)
     })
     .bind("127.0.0.1:8080")?
     .run()
