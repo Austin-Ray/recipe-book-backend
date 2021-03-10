@@ -1,6 +1,10 @@
 use actix_web::{get, post, put, web, App, Error, HttpResponse, HttpServer, Responder};
+use r2d2_sqlite::{self, SqliteConnectionManager};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+
+type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
+type SqliteConn = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Recipe {
@@ -9,17 +13,13 @@ struct Recipe {
     desc: Option<String>,
 }
 
-struct AppState {
-    recipes: Mutex<Vec<Recipe>>,
-}
-
 #[get("/")]
 async fn hello() -> impl Responder {
     HttpResponse::Ok().body("hello, world!")
 }
 
 #[post("/recipes/add")]
-async fn add(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
+async fn add(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let recipe = Recipe {
         id: Some(0),
         name: recipe_json.name.to_string(),
@@ -30,12 +30,9 @@ async fn add(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Resul
     };
 
     let output_json = serde_json::to_string(&recipe);
-    let recipe_store = data.recipes.lock();
 
-    match recipe_store {
-      Ok(mut store) => store.push(recipe),
-      Err(_) => return Ok(HttpResponse::InternalServerError().body(""))
-    }
+    let conn = db.get().unwrap();
+    conn.execute("INSERT INTO recipes (name, desc) VALUES (?1, ?2)", params![recipe.name, recipe.desc]).unwrap();
 
     match output_json  {
         Ok(json) => Ok(HttpResponse::Ok().body(json)),
@@ -43,26 +40,17 @@ async fn add(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Resul
     }
 }
 
-fn find_recipe_idx_by_id(store: &Vec<Recipe>, id: u32) -> Option<usize> {
-    for (idx, recipe) in store.iter().enumerate() {
-        if recipe.id == Some(id) {
-            return Some(idx);
-        }
-    }
+fn update_recipe(conn: &SqliteConn, updated_recipe: &Recipe) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare("UPDATE recipes SET name = (?1), desc = (?2) WHERE id = (?3)").unwrap();
 
-    None
-}
+  stmt.execute(params![updated_recipe.name, updated_recipe.desc, updated_recipe.id])?;
 
-fn replace_with_elem(store: &mut Vec<Recipe>, idx: usize, replacement: Recipe) {
-    store[idx] = replacement;
+  Ok(())
 }
 
 #[put("/recipes/edit")]
-async fn edit(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
-    let mut recipes_store = match data.recipes.lock() {
-      Ok(store) => store,
-      Err(_) => return Ok(HttpResponse::InternalServerError().body(""))
-    };
+async fn edit(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    let conn = db.get().unwrap();
 
     let recipe: Recipe = recipe_json.into_inner();
 
@@ -70,40 +58,45 @@ async fn edit(recipe_json: web::Json<Recipe>, data: web::Data<AppState>) -> Resu
         return Ok(HttpResponse::BadRequest().body("Missing recipe ID"));
     }
 
-    let recipe_idx: Option<usize> = find_recipe_idx_by_id(&recipes_store, recipe.id.unwrap());
-
-    match recipe_idx {
-        Some(idx) => {
-            replace_with_elem(&mut recipes_store, idx, recipe);
-            let json_resp = serde_json::to_string(&recipes_store[idx]);
-            match json_resp {
-                Ok(body) => Ok(HttpResponse::Ok().body(body)),
-                Err(_) => Ok(HttpResponse::InternalServerError().body("JSON serialization error!")),
-            }
-        }
-        None => Ok(HttpResponse::BadRequest().body("No matching recipe")),
+    let res = update_recipe(&conn, &recipe);
+    match res {
+      Ok(_) => Ok(HttpResponse::Ok().json(recipe)),
+      Err(_) => Ok(HttpResponse::InternalServerError().body("ERROR"))
     }
 }
 
 #[get("/recipes/all")]
-async fn recipes(data: web::Data<AppState>) -> Result<HttpResponse, Error> {
-    let recipes = data.recipes.lock().unwrap();
+async fn recipes(db: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    let conn = db.get().unwrap();
+    let mut stmt = conn.prepare("SELECT * FROM recipes").unwrap();
 
-    match serde_json::to_string(&*recipes) {
-        Ok(json) => Ok(HttpResponse::Ok().body(json)),
-        Err(_) => Ok(HttpResponse::InternalServerError().body("Error")),
-    }
+    let recipes: Vec<Recipe> = stmt.query_map(params![], |row| {
+      Ok(Recipe {
+        id: row.get(0).unwrap(),
+        name: row.get(1).unwrap(),
+        desc: row.get(2).unwrap()
+      })
+    })
+    .unwrap()
+    .map(|x| x.unwrap())
+    .collect();
+
+    Ok(HttpResponse::Ok().json(recipes))
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let state = web::Data::new(AppState {
-      recipes: Mutex::new(vec![])
-    });
+    std::env::set_var("RUST_LOG", "actix_web=info");
+
+    let manager = SqliteConnectionManager::file("recipes.db");
+    let pool  = r2d2::Pool::new(manager).unwrap();
+
+    let conn: SqliteConn = pool.get().unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS recipes (id INTEGER PRIMARY KEY ASC, name TEXT, desc TEXT)", params![]).unwrap();
 
     HttpServer::new(move || {
         App::new()
-            .app_data(state.clone())
+            .data(pool.clone())
             .service(hello)
             .service(add)
             .service(recipes)
