@@ -21,15 +21,7 @@ async fn hello() -> impl Responder {
 
 #[post("/recipes/add")]
 async fn add(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<HttpResponse, Error> {
-    let recipe = Recipe {
-        id: Some(0),
-        name: recipe_json.name.to_string(),
-        desc: match &recipe_json.desc {
-            Some(desc) => Some(desc.to_string()),
-            _ => None,
-        },
-    };
-
+    let recipe = recipe_json.into_inner();
     let conn = match db.get() {
         Ok(conn) => conn,
         Err(e) => {
