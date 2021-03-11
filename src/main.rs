@@ -29,15 +29,10 @@ async fn add(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<Http
         },
     };
 
-    let output_json = serde_json::to_string(&recipe);
-
     let conn = db.get().unwrap();
     conn.execute("INSERT INTO recipes (name, desc) VALUES (?1, ?2)", params![recipe.name, recipe.desc]).unwrap();
 
-    match output_json  {
-        Ok(json) => Ok(HttpResponse::Ok().body(json)),
-        Err(_) => Ok(HttpResponse::InternalServerError().body("")),
-    }
+    Ok(HttpResponse::Ok().json(recipe))
 }
 
 fn update_recipe(conn: &SqliteConn, updated_recipe: &Recipe) -> rusqlite::Result<()> {
