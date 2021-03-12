@@ -13,6 +13,19 @@ struct Recipe {
     name: String,
     desc: Option<String>,
     steps: Vec<String>,
+    ingredients: Vec<IngredientQuantity>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Quantity {
+    value: f64,
+    unit: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct IngredientQuantity {
+    ingredient: String,
+    quantity: Quantity,
 }
 
 #[get("/")]
@@ -28,13 +41,24 @@ fn add_recipe(conn: &mut SqliteConn, recipe: &Recipe) -> rusqlite::Result<()> {
         params![recipe.name, recipe.desc],
     )?;
 
-    let new_id = tx.last_insert_rowid();
+    let recipe_id = tx.last_insert_rowid();
 
     let mut stmt = tx.prepare("INSERT INTO steps (recipe_id, text) VALUES (?1, ?2)")?;
     for step in recipe.steps.iter() {
-        stmt.execute(params![new_id, step])?;
+        stmt.execute(params![recipe_id, step])?;
     }
     stmt.finalize()?;
+
+    let mut ing_stmt = tx.prepare("INSERT INTO ingredients (name) SELECT (?1) WHERE NOT EXISTS (SELECT 1 FROM ingredients WHERE name = (?1))")?;
+    let mut quantity_stmt = tx.prepare("INSERT INTO recipe_ingredients (recipe_id, ingredient_id, quantity, unit) VALUES (?1, (SELECT id FROM ingredients WHERE name = ?2), ?3, ?4)")?;
+    for ing_quant in recipe.ingredients.iter() {
+        ing_stmt.execute(params![ing_quant.ingredient])?;
+        let quantity = &ing_quant.quantity;
+        quantity_stmt.execute(params![recipe_id, ing_quant.ingredient, quantity.value, quantity.unit])?;
+    }
+
+    ing_stmt.finalize()?;
+    quantity_stmt.finalize()?;
 
     tx.commit()
 }
@@ -78,7 +102,27 @@ fn update_recipe(conn: &mut SqliteConn, updated_recipe: &Recipe) -> rusqlite::Re
     for step in updated_recipe.steps.iter() {
         stmt.execute(params![updated_recipe.id, step])?;
     }
+
+    stmt = tx.prepare("DELETE FROM recipe_ingredients WHERE recipe_id = (?)")?;
+    stmt.execute(params![updated_recipe.id])?;
+
+    let mut ing_stmt = tx.prepare("INSERT INTO ingredients (name) SELECT (?1) WHERE NOT EXISTS (SELECT 1 FROM ingredients WHERE name = (?1))")?;
+    let mut rec_ing_stmt = tx.prepare("INSERT INTO recipe_ingredients (recipe_id, ingredient_id, quantity, unit) VALUES (?1, (SELECT id FROM ingredients WHERE name = ?2), ?3, ?4)")?;
+
+    for ing_quant in updated_recipe.ingredients.iter() {
+        let quant = &ing_quant.quantity;
+        ing_stmt.execute(params![ing_quant.ingredient])?;
+        rec_ing_stmt.execute(params![
+            updated_recipe.id,
+            ing_quant.ingredient,
+            quant.value,
+            quant.unit
+        ])?;
+    }
+
     stmt.finalize()?;
+    ing_stmt.finalize()?;
+    rec_ing_stmt.finalize()?;
 
     tx.commit()
 }
@@ -117,6 +161,27 @@ fn load_steps(conn: &SqliteConn, recipe_id: u32) -> rusqlite::Result<Vec<String>
     Ok(steps)
 }
 
+fn load_ingredients(
+    conn: &SqliteConn,
+    recipe_id: u32,
+) -> rusqlite::Result<Vec<IngredientQuantity>> {
+    let mut stmt = conn.prepare("SELECT name, quantity, unit FROM recipe_ingredients LEFT JOIN ingredients ON ingredient_id = id WHERE recipe_id = ?")?;
+    let ingredients = stmt
+        .query_map(params![recipe_id], |row| {
+            Ok(IngredientQuantity {
+                ingredient: row.get(0)?,
+                quantity: Quantity {
+                    value: row.get(1)?,
+                    unit: row.get(2)?,
+                },
+            })
+        })?
+        .filter_map(|x| x.ok())
+        .collect();
+
+    Ok(ingredients)
+}
+
 fn load_recipes(conn: &SqliteConn) -> rusqlite::Result<Vec<Recipe>> {
     let mut stmt = conn.prepare("SELECT * FROM recipes")?;
     let db_recipes = stmt
@@ -126,6 +191,7 @@ fn load_recipes(conn: &SqliteConn) -> rusqlite::Result<Vec<Recipe>> {
                 name: row.get(1)?,
                 desc: row.get(2)?,
                 steps: load_steps(&conn, row.get(0)?)?,
+                ingredients: load_ingredients(&conn, row.get(0)?)?,
             })
         })?
         .filter_map(|x| x.ok())
@@ -163,6 +229,8 @@ fn create_expected_tables(conn: &SqliteConn) {
       "CREATE TABLE IF NOT EXISTS steps (recipe_id INTEGER, text TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, text), FOREIGN KEY (recipe_id) REFERENCES recipes (id))",
       params![],
   );
+    conn.execute("CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY ASC, name TEXT NOT NULL UNIQUE)", params![]).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_id INTEGER, ingredient_id INTEGER, quantity REAL, unit TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, ingredient_id), FOREIGN KEY(recipe_id) REFERENCES recipes (id), FOREIGN KEY (ingredient_id) REFERENCES ingredients (id));", params![]).unwrap();
     if let Err(e) = create_recipes {
         error!("Unable to create recipes table: {}", e);
         panic!("{}", e);
