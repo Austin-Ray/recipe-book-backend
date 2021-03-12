@@ -1,4 +1,4 @@
-use actix_web::{get, post, put, web, App, Error, HttpResponse, HttpServer, Responder};
+use actix_web::{delete, get, post, put, web, App, Error, HttpResponse, HttpServer, Responder};
 use log::{error, info};
 use r2d2_sqlite::{self, SqliteConnectionManager};
 use rusqlite::params;
@@ -220,17 +220,52 @@ async fn recipes(db: web::Data<Pool>) -> Result<HttpResponse, Error> {
     }
 }
 
+fn delete_recipe(conn: &mut SqliteConn, recipe_id: i32) -> rusqlite::Result<()> {
+  let tx = conn.transaction()?;
+  let mut stmt = tx.prepare("DELETE FROM recipes WHERE id = (?)")?;
+  stmt.execute(params![recipe_id])?;
+  stmt.finalize()?;
+
+  tx.commit()?;
+
+  Ok(())
+}
+
+#[derive(Deserialize)]
+struct Info {
+  recipe_id: i32
+}
+
+#[delete("/recipes/delete")]
+async fn delete(db: web::Data<Pool>, info: web::Query<Info>) -> Result<HttpResponse, Error> {
+  let mut conn = match db.get() {
+      Ok(conn) => conn,
+      Err(e) => {
+          error!("Unable to get database connection: {}", e);
+          return Ok(HttpResponse::InternalServerError().body("Database error."));
+      }
+  };
+
+  match delete_recipe(&mut conn, info.recipe_id) {
+    Ok(_) => Ok(HttpResponse::Ok().body("")),
+    Err(e) => {
+        error!("Unable to delete recipe ID {}: {}", info.recipe_id, e);
+        Ok(HttpResponse::InternalServerError().body("Database error."))
+    }
+  }
+}
+
 fn create_expected_tables(conn: &SqliteConn) {
     let create_recipes = conn.execute(
         "CREATE TABLE IF NOT EXISTS recipes (id INTEGER PRIMARY KEY ASC, name TEXT, desc TEXT)",
         params![],
     );
     let _create_steps = conn.execute(
-      "CREATE TABLE IF NOT EXISTS steps (recipe_id INTEGER, text TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, text), FOREIGN KEY (recipe_id) REFERENCES recipes (id))",
+      "CREATE TABLE IF NOT EXISTS steps (recipe_id INTEGER, text TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, text), FOREIGN KEY (recipe_id) REFERENCES recipes (id) ON UPDATE CASCADE ON DELETE CASCADE)",
       params![],
   );
     conn.execute("CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY ASC, name TEXT NOT NULL UNIQUE)", params![]).unwrap();
-    conn.execute("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_id INTEGER, ingredient_id INTEGER, quantity REAL, unit TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, ingredient_id), FOREIGN KEY(recipe_id) REFERENCES recipes (id), FOREIGN KEY (ingredient_id) REFERENCES ingredients (id));", params![]).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_id INTEGER, ingredient_id INTEGER, quantity REAL, unit TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, ingredient_id), FOREIGN KEY(recipe_id) REFERENCES recipes (id) ON UPDATE CASCADE ON DELETE CASCADE, FOREIGN KEY (ingredient_id) REFERENCES ingredients (id) ON UPDATE CASCADE ON DELETE CASCADE);", params![]).unwrap();
     if let Err(e) = create_recipes {
         error!("Unable to create recipes table: {}", e);
         panic!("{}", e);
@@ -269,6 +304,7 @@ async fn main() -> std::io::Result<()> {
             .service(add)
             .service(recipes)
             .service(edit)
+            .service(delete)
     })
     .bind("127.0.0.1:8080")?
     .run()
