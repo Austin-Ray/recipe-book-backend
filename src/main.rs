@@ -106,78 +106,30 @@ async fn edit(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<Htt
     }
 }
 
-struct SqlRecipeStepJoin {
-    id: u32,
-    name: String,
-    desc: String,
-    text: String,
-}
+fn load_steps(conn: &SqliteConn, recipe_id: u32) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT text FROM steps WHERE recipe_id = ?")?;
 
-fn recipe_step_joins_to_recipes(joins: Vec<SqlRecipeStepJoin>) -> Vec<Recipe> {
-    let mut db_recipes = vec![];
-    let mut recipe_step_join_iter = joins.iter();
+    let steps: Vec<String> = stmt
+        .query_map(params![recipe_id], |row| Ok(row.get(0)?))?
+        .filter_map(|x| x.ok())
+        .collect();
 
-    // Take the first element
-    let first_row = match recipe_step_join_iter.nth(0) {
-        Some(elem) => elem,
-        None => return vec![],
-    };
-
-    let mut cur_id = first_row.id;
-    let mut cur_name = first_row.name.to_owned();
-    let mut cur_desc = first_row.desc.to_owned();
-    let mut cur_steps: Vec<String> = vec![];
-    cur_steps.push(first_row.text.to_owned());
-
-    for join in recipe_step_join_iter {
-        if join.id != cur_id {
-            let new_recipe = Recipe {
-                id: Some(cur_id),
-                name: String::from(cur_name),
-                desc: Some(String::from(cur_desc)),
-                steps: cur_steps,
-            };
-
-            cur_id = join.id;
-            cur_name = join.name.to_owned();
-            cur_desc = join.desc.to_owned();
-
-            cur_steps = vec![];
-
-            db_recipes.push(new_recipe);
-        }
-
-        cur_steps.push(join.text.to_owned());
-    }
-
-    let new_recipe = Recipe {
-        id: Some(cur_id),
-        name: String::from(cur_name),
-        desc: Some(String::from(cur_desc)),
-        steps: cur_steps,
-    };
-    db_recipes.push(new_recipe);
-
-    db_recipes
+    Ok(steps)
 }
 
 fn load_recipes(conn: &SqliteConn) -> rusqlite::Result<Vec<Recipe>> {
-    let mut stmt = conn
-        .prepare("SELECT id, name, desc, text FROM recipes LEFT JOIN steps WHERE id = recipe_id")?;
-
-    let recipe_step_join: Vec<SqlRecipeStepJoin> = stmt
+    let mut stmt = conn.prepare("SELECT * FROM recipes")?;
+    let db_recipes = stmt
         .query_map(params![], |row| {
-            Ok(SqlRecipeStepJoin {
+            Ok(Recipe {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 desc: row.get(2)?,
-                text: row.get(3)?,
+                steps: load_steps(&conn, row.get(0)?)?,
             })
         })?
         .filter_map(|x| x.ok())
         .collect();
-
-    let db_recipes: Vec<Recipe> = recipe_step_joins_to_recipes(recipe_step_join);
 
     Ok(db_recipes)
 }
