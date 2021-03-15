@@ -1,3 +1,20 @@
+///
+/// Recipe Book Backend - A small recipe server
+/// Copyright (C) 2021 Austin Ray <austin@austinray.io>
+///
+/// This program is free software: you can redistribute it and/or modify
+/// it under the terms of the GNU Affero General Public License as published
+/// by the Free Software Foundation, either version 3 of the License, or
+/// (at your option) any later version.
+///
+/// This program is distributed in the hope that it will be useful,
+/// but WITHOUT ANY WARRANTY; without even the implied warranty of
+/// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+/// GNU Affero General Public License for more details.
+///
+/// You should have received a copy of the GNU Affero General Public License
+/// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+///
 use actix_web::{delete, get, post, put, web, App, Error, HttpResponse, HttpServer, Responder};
 use log::{error, info};
 use r2d2_sqlite::{self, SqliteConnectionManager};
@@ -54,7 +71,12 @@ fn add_recipe(conn: &mut SqliteConn, recipe: &Recipe) -> rusqlite::Result<()> {
     for ing_quant in recipe.ingredients.iter() {
         ing_stmt.execute(params![ing_quant.ingredient])?;
         let quantity = &ing_quant.quantity;
-        quantity_stmt.execute(params![recipe_id, ing_quant.ingredient, quantity.value, quantity.unit])?;
+        quantity_stmt.execute(params![
+            recipe_id,
+            ing_quant.ingredient,
+            quantity.value,
+            quantity.unit
+        ])?;
     }
 
     ing_stmt.finalize()?;
@@ -221,38 +243,38 @@ async fn recipes(db: web::Data<Pool>) -> Result<HttpResponse, Error> {
 }
 
 fn delete_recipe(conn: &mut SqliteConn, recipe_id: i32) -> rusqlite::Result<()> {
-  let tx = conn.transaction()?;
-  let mut stmt = tx.prepare("DELETE FROM recipes WHERE id = (?)")?;
-  stmt.execute(params![recipe_id])?;
-  stmt.finalize()?;
+    let tx = conn.transaction()?;
+    let mut stmt = tx.prepare("DELETE FROM recipes WHERE id = (?)")?;
+    stmt.execute(params![recipe_id])?;
+    stmt.finalize()?;
 
-  tx.commit()?;
+    tx.commit()?;
 
-  Ok(())
+    Ok(())
 }
 
 #[derive(Deserialize)]
 struct Info {
-  recipe_id: i32
+    recipe_id: i32,
 }
 
 #[delete("/recipes/delete")]
 async fn delete(db: web::Data<Pool>, info: web::Query<Info>) -> Result<HttpResponse, Error> {
-  let mut conn = match db.get() {
-      Ok(conn) => conn,
-      Err(e) => {
-          error!("Unable to get database connection: {}", e);
-          return Ok(HttpResponse::InternalServerError().body("Database error."));
-      }
-  };
+    let mut conn = match db.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Unable to get database connection: {}", e);
+            return Ok(HttpResponse::InternalServerError().body("Database error."));
+        }
+    };
 
-  match delete_recipe(&mut conn, info.recipe_id) {
-    Ok(_) => Ok(HttpResponse::Ok().body("")),
-    Err(e) => {
-        error!("Unable to delete recipe ID {}: {}", info.recipe_id, e);
-        Ok(HttpResponse::InternalServerError().body("Database error."))
+    match delete_recipe(&mut conn, info.recipe_id) {
+        Ok(_) => Ok(HttpResponse::Ok().body("")),
+        Err(e) => {
+            error!("Unable to delete recipe ID {}: {}", info.recipe_id, e);
+            Ok(HttpResponse::InternalServerError().body("Database error."))
+        }
     }
-  }
 }
 
 fn create_expected_tables(conn: &SqliteConn) {
