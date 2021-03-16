@@ -1,0 +1,9 @@
+image: archlinux
+packages:
+  - rustup
+sources:
+  - https://github.com/Austin-Ray/recipe-book-backend
+tasks:
+  - build: |
+      cd recipe-book-backend
+      cargo build --verbose
