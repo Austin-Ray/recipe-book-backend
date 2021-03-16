@@ -158,7 +158,7 @@ async fn edit(recipe_json: web::Json<Recipe>, db: web::Data<Pool>) -> Result<Htt
 
     let recipe: Recipe = recipe_json.into_inner();
 
-    if let None = &recipe.id {
+    if recipe.id.is_none() {
         return Ok(HttpResponse::BadRequest().body("Missing recipe ID"));
     }
 
@@ -176,7 +176,7 @@ fn load_steps(conn: &SqliteConn, recipe_id: u32) -> rusqlite::Result<Vec<String>
     let mut stmt = conn.prepare("SELECT text FROM steps WHERE recipe_id = ?")?;
 
     let steps: Vec<String> = stmt
-        .query_map(params![recipe_id], |row| Ok(row.get(0)?))?
+        .query_map(params![recipe_id], |row| row.get(0))?
         .filter_map(|x| x.ok())
         .collect();
 
