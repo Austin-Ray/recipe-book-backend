@@ -7,3 +7,6 @@ tasks:
   - build: |
       cd recipe-book-backend
       cargo build --verbose
+  - test: |
+      cd recipe-book-backend
+      cargo test --verbose
