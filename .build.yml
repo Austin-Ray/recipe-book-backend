@@ -1,0 +1,38 @@
+image: archlinux
+packages:
+  - rustup
+sources:
+  - https://github.com/Austin-Ray/recipe-book-backend
+secrets:
+  - 05c3a841-4367-4f6f-bd8a-79a4659554e7
+environment:
+  RUSTFLAGS: -Zinstrument-coverage
+  LLVM_PROFILE_FILE: "your_name-%p-%m.profraw"
+tasks:
+  - setup: |
+      cd recipe-book-backend
+      curl -L https://github.com/mozilla/grcov/releases/latest/download/grcov-linux-x86_64.tar.bz2 | tar jxf -
+      rustup default nightly
+      rustup component add llvm-tools-preview
+  - build: |
+      cd recipe-book-backend
+      cargo build --verbose
+  - test: |
+      cd recipe-book-backend
+      cargo test --verbose
+      if [ -f ~/.code-cov ];
+      then
+        set +x
+        source ~/.code-cov
+        set -x
+        ./grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" -o lcov.info
+        export CI_BUILD_URL="$JOB_URL"
+        export CI_BUILD_ID="$JOB_ID"
+        export CI_JOB_ID="$JOB_ID"
+        export VCS_BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+        export VCS_PULL_REQUEST="$GITHUB_PR_NUMBER"
+        bash <(curl -s https://codecov.io/bash) -f lcov.info
+      fi
+  - qa: |
+      cd recipe-book-backend
+      cargo clippy -- -D warnings
