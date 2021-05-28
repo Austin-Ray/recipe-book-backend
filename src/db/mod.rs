@@ -15,28 +15,24 @@
 /// You should have received a copy of the GNU Affero General Public License
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ///
-use actix_web::{App, HttpServer};
-use log::info;
-use recipe_book_backend::db::{self, Repo};
-use recipe_book_backend::AppConfig;
+use crate::Recipe;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    env_logger::init();
-    info!("Starting up...");
+mod sqlite;
 
-    HttpServer::new(move || {
-        let repo: Box<dyn Repo> = db::create_repo(db::Backend::Sqlite);
+pub trait Repo {
+    fn setup(&self);
+    fn add_recipe(&self, recipe: &Recipe) -> rusqlite::Result<()>;
+    fn delete_recipe(&self, recipe_id: i32) -> rusqlite::Result<()>;
+    fn update_recipe(&self, updated_recipe: &Recipe) -> rusqlite::Result<()>;
+    fn load_recipes(&self) -> rusqlite::Result<Vec<Recipe>>;
+}
 
-        App::new()
-            .data(AppConfig { repo })
-            .service(recipe_book_backend::hello)
-            .service(recipe_book_backend::add)
-            .service(recipe_book_backend::recipes)
-            .service(recipe_book_backend::edit)
-            .service(recipe_book_backend::delete)
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+pub enum Backend {
+    Sqlite,
+}
+
+pub fn create_repo(db_backend: Backend) -> Box<dyn Repo> {
+    match db_backend {
+        Backend::Sqlite => sqlite::create_repo(),
+    }
 }
