@@ -25,8 +25,22 @@ pub type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
 pub type SqliteConn = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
 
 pub fn create_repo() -> Box<dyn Repo> {
-    let manager = SqliteConnectionManager::file("recipes.db")
-        .with_init(|c| c.execute_batch("PRAGMA foreign_keys=1"));
+    create_repo_with_name("recipes.db")
+}
+
+pub fn create_repo_with_name(name: &str) -> Box<dyn Repo> {
+    let path = std::path::Path::new(name);
+
+    match path.parent() {
+        Some(parent) => match std::fs::create_dir_all(parent) {
+            Ok(()) => {}
+            Err(e) => panic!("{}", e),
+        },
+        None => panic!("Unable to create database directory"),
+    }
+
+    let manager =
+        SqliteConnectionManager::file(name).with_init(|c| c.execute_batch("PRAGMA foreign_keys=1"));
     let pool = match r2d2::Pool::new(manager) {
         Ok(pool) => pool,
         Err(e) => {
@@ -35,9 +49,7 @@ pub fn create_repo() -> Box<dyn Repo> {
         }
     };
 
-    let repo: Box<dyn Repo> = Box::new(SqliteRepo {
-        conn_man: pool.clone(),
-    });
+    let repo: Box<dyn Repo> = Box::new(SqliteRepo { conn_man: pool });
 
     repo.setup();
 
@@ -219,4 +231,120 @@ fn load_ingredients(
         .collect();
 
     Ok(ingredients)
+}
+
+mod tests {
+    use super::*;
+    use rand::Rng;
+
+    #[allow(dead_code)]
+    fn setup_repo() -> (Box<dyn Repo>, String) {
+        let mut rng = rand::thread_rng();
+
+        let name = format!("target/tests/recipes-{}.db", rng.gen::<u32>());
+
+        cleanup_repo(&name);
+        (create_repo_with_name(&name), name)
+    }
+
+    fn cleanup_repo(file_loc: &str) {
+        match std::fs::remove_file(file_loc) {
+            Ok(()) => {}
+            Err(e) => error!("Testing error: {}", e),
+        };
+    }
+
+    #[test]
+    fn test_add() {
+        let (repo, name) = setup_repo();
+
+        let recipe = Recipe {
+            id: Some(1),
+            name: "Test Recipe".to_string(),
+            desc: Some("Test Description".to_string()),
+            steps: vec!["Step 1".to_string()],
+            ingredients: vec![IngredientQuantity {
+                ingredient: "Potato".to_string(),
+                quantity: Quantity {
+                    value: 1.0,
+                    unit: "whole".to_string(),
+                },
+            }],
+        };
+
+        assert_eq!(Vec::<Recipe>::new(), repo.load_recipes().unwrap());
+        repo.add_recipe(&recipe).unwrap();
+        assert_eq!(vec![recipe.clone()], repo.load_recipes().unwrap());
+
+        let recipe_2 = Recipe {
+            id: Some(2),
+            ..recipe.clone()
+        };
+
+        repo.add_recipe(&recipe_2).unwrap();
+        assert_eq!(vec![recipe, recipe_2], repo.load_recipes().unwrap());
+
+        cleanup_repo(&name);
+    }
+
+    #[test]
+    fn test_delete() {
+        let (repo, name) = setup_repo();
+
+        let recipe = Recipe {
+            id: Some(1),
+            name: "Test Recipe".to_string(),
+            desc: Some("Test Description".to_string()),
+            steps: vec!["Step 1".to_string()],
+            ingredients: vec![IngredientQuantity {
+                ingredient: "Potato".to_string(),
+                quantity: Quantity {
+                    value: 1.0,
+                    unit: "whole".to_string(),
+                },
+            }],
+        };
+
+        assert_eq!(Vec::<Recipe>::new(), repo.load_recipes().unwrap());
+        repo.add_recipe(&recipe).unwrap();
+        assert_eq!(vec![recipe.clone()], repo.load_recipes().unwrap());
+
+        repo.delete_recipe(1).unwrap();
+        assert_eq!(Vec::<Recipe>::new(), repo.load_recipes().unwrap());
+
+        cleanup_repo(&name);
+    }
+
+    #[test]
+    fn test_update() {
+        let (repo, name) = setup_repo();
+
+        let recipe = Recipe {
+            id: Some(1),
+            name: "Test Recipe".to_string(),
+            desc: Some("Test Description".to_string()),
+            steps: vec!["Step 1".to_string()],
+            ingredients: vec![IngredientQuantity {
+                ingredient: "Potato".to_string(),
+                quantity: Quantity {
+                    value: 1.0,
+                    unit: "whole".to_string(),
+                },
+            }],
+        };
+
+        assert_eq!(Vec::<Recipe>::new(), repo.load_recipes().unwrap());
+        repo.add_recipe(&recipe).unwrap();
+        assert_eq!(vec![recipe.clone()], repo.load_recipes().unwrap());
+
+        let recipe_2 = Recipe {
+            steps: vec![],
+            ..recipe.clone()
+        };
+
+        repo.update_recipe(&recipe_2).unwrap();
+        assert_eq!(vec![recipe_2], repo.load_recipes().unwrap());
+
+        cleanup_repo(&name);
+    }
 }

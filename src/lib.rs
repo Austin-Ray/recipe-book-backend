@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod db;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Recipe {
     pub id: Option<u32>, // Used for database.
     pub name: String,
@@ -30,13 +30,13 @@ pub struct Recipe {
     pub ingredients: Vec<IngredientQuantity>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Quantity {
     pub value: f64,
     pub unit: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct IngredientQuantity {
     pub ingredient: String,
     pub quantity: Quantity,
