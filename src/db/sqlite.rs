@@ -17,6 +17,7 @@
 ///
 use crate::db::Repo;
 use crate::{IngredientQuantity, Quantity, Recipe};
+use anyhow::Result;
 use log::error;
 use r2d2_sqlite::{self, SqliteConnectionManager};
 use rusqlite::params;
@@ -65,31 +66,29 @@ impl SqliteRepo {
         self.conn_man.get().unwrap()
     }
 
-    pub fn create_expected_tables(&self, conn: &SqliteConn) {
-        let create_recipes = conn.execute(
+    pub fn create_expected_tables(&self, conn: &SqliteConn) -> Result<()> {
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS recipes (id INTEGER PRIMARY KEY ASC, name TEXT, desc TEXT)",
             params![],
-        );
+        )?;
         let _create_steps = conn.execute(
           "CREATE TABLE IF NOT EXISTS steps (recipe_id INTEGER, text TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, text), FOREIGN KEY (recipe_id) REFERENCES recipes (id) ON UPDATE CASCADE ON DELETE CASCADE)",
           params![],
       );
-        conn.execute("CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY ASC, name TEXT NOT NULL UNIQUE)", params![]).unwrap();
-        conn.execute("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_id INTEGER, ingredient_id INTEGER, quantity REAL, unit TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, ingredient_id), FOREIGN KEY(recipe_id) REFERENCES recipes (id) ON UPDATE CASCADE ON DELETE CASCADE, FOREIGN KEY (ingredient_id) REFERENCES ingredients (id) ON UPDATE CASCADE ON DELETE CASCADE);", params![]).unwrap();
-        if let Err(e) = create_recipes {
-            error!("Unable to create recipes table: {}", e);
-            panic!("{}", e);
-        }
+        conn.execute("CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY ASC, name TEXT NOT NULL UNIQUE)", params![])?;
+        conn.execute("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_id INTEGER, ingredient_id INTEGER, quantity REAL, unit TEXT, CONSTRAINT COMP_K PRIMARY KEY (recipe_id, ingredient_id), FOREIGN KEY(recipe_id) REFERENCES recipes (id) ON UPDATE CASCADE ON DELETE CASCADE, FOREIGN KEY (ingredient_id) REFERENCES ingredients (id) ON UPDATE CASCADE ON DELETE CASCADE);", params![])?;
+        Ok(())
     }
 }
 
 impl Repo for SqliteRepo {
-    fn setup(&self) {
+    fn setup(&self) -> Result<()> {
         let conn = self.get_conn();
-        self.create_expected_tables(&conn);
+        self.create_expected_tables(&conn)?;
+        Ok(())
     }
 
-    fn add_recipe(&self, recipe: &Recipe) -> rusqlite::Result<()> {
+    fn add_recipe(&self, recipe: &Recipe) -> Result<()> {
         let mut conn = self.get_conn();
         // do nothing right now
         let tx = conn.transaction()?;
@@ -123,10 +122,11 @@ impl Repo for SqliteRepo {
         ing_stmt.finalize()?;
         quantity_stmt.finalize()?;
 
-        tx.commit()
+        tx.commit()?;
+        Ok(())
     }
 
-    fn update_recipe(&self, updated_recipe: &Recipe) -> rusqlite::Result<()> {
+    fn update_recipe(&self, updated_recipe: &Recipe) -> Result<()> {
         let mut conn = self.get_conn();
         let tx = conn.transaction()?;
 
@@ -166,10 +166,11 @@ impl Repo for SqliteRepo {
         ing_stmt.finalize()?;
         rec_ing_stmt.finalize()?;
 
-        tx.commit()
+        tx.commit()?;
+        Ok(())
     }
 
-    fn delete_recipe(&self, recipe_id: i32) -> rusqlite::Result<()> {
+    fn delete_recipe(&self, recipe_id: i32) -> Result<()> {
         let mut conn = self.get_conn();
         let tx = conn.transaction()?;
         let mut stmt = tx.prepare("DELETE FROM recipes WHERE id = (?)")?;
@@ -181,7 +182,7 @@ impl Repo for SqliteRepo {
         Ok(())
     }
 
-    fn load_recipes(&self) -> rusqlite::Result<Vec<Recipe>> {
+    fn load_recipes(&self) -> Result<Vec<Recipe>> {
         let conn = self.get_conn();
         let mut stmt = conn.prepare("SELECT * FROM recipes")?;
         let db_recipes = stmt

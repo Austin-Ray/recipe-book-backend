@@ -16,15 +16,16 @@
 /// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ///
 use crate::Recipe;
+use anyhow::Result;
 
 mod sqlite;
 
 pub trait Repo {
     fn setup(&self);
-    fn add_recipe(&self, recipe: &Recipe) -> rusqlite::Result<()>;
-    fn delete_recipe(&self, recipe_id: i32) -> rusqlite::Result<()>;
-    fn update_recipe(&self, updated_recipe: &Recipe) -> rusqlite::Result<()>;
-    fn load_recipes(&self) -> rusqlite::Result<Vec<Recipe>>;
+    fn add_recipe(&self, recipe: &Recipe) -> Result<()>;
+    fn delete_recipe(&self, recipe_id: i32) -> Result<()>;
+    fn update_recipe(&self, updated_recipe: &Recipe) -> Result<()>;
+    fn load_recipes(&self) -> Result<Vec<Recipe>>;
 }
 
 pub enum Backend {
